@@ -3,7 +3,7 @@
 
 #include "raylib.h"
 
-#define EVAL_QUEUE_CAP 200
+#define EVAL_BUFF_CAP 30
 
 #define CIRCUT_NAME_LEN 20
 
@@ -26,9 +26,12 @@
 
 #define PATH_SIZE 10
 
+#define MAX_COMPONENT_EVAL_COUNT 5
+
 typedef enum PinState {
     LOW,
     HIGH,
+    FLOATING,
 } PinState;
 
 typedef enum PinType {
@@ -38,6 +41,7 @@ typedef enum PinType {
 
 typedef struct Pin {
     PinType type;
+    bool io;
     enum PinState state;
     struct Component *component;
 
@@ -69,46 +73,45 @@ typedef struct Circuit {
 
     void (*eval)(struct Circuit *circuit);
 
+
 } Circuit;
 
 typedef struct Component {
     struct Circuit *defn;
-
-    struct Pin **pins;
-    int nPins;
-    int nInPins;
-    int nOutPins;
-
-    struct Component *next;
+    int id;
 
     Vector2 pos;
     Color color;
+
+    int nInPins;
+    int nOutPins;
+    int nPins;
+    struct Pin *pins[];
+
 } Component;
 
 
 typedef struct Wire {
-    Vector2 path[DEFAULT_WIRE_PATH_LEN];
+    Circuit *circuit;
     Pin *startPin;
     Pin *endPin;
-    int pathLen;
     Color color;
+    int pathLen;
+    Vector2 path[PATH_SIZE];
 } Wire;
 
 typedef struct LogicCtx {
     struct Circuit **circuits;
     int nCircuits;
     int capCircuits;
-    struct Component **evalQueue;
-    int queueSize;
-    int queueCap;
 } LogicCtx;
 
-LogicCtx *logicInit();
+void logicInit(LogicCtx *ctx);
 void logicFree(LogicCtx *ctx);
 Circuit *addCircuit(LogicCtx *ctx, Circuit *circuit);
 Pin *newPin(Circuit *circuit, PinType type);
 int connectPins(Circuit *circuit, Pin *pin1, Pin *pin2, Wire *wire);
-Component *addComponent(Circuit *dest, Component *component);
+Component *addComponent(LogicCtx *ctx, Circuit *dest, Component *component);
 
 Circuit *getCircuit(LogicCtx *ctx, char *name);
 
@@ -126,9 +129,11 @@ void insertWire(Circuit *circuit, Wire *wire);
 
 bool isConnected(Pin *pin1, Pin *pin2);
 
+void logicEval(Circuit *circuit);
 void handlePinChange(LogicCtx *ctx, Pin *pin);
-int calculatePinState(Pin *pin);
-void evalComponent(Component *component);
-void logicEval(LogicCtx *ctx);
+PinState calculatePinState(Pin *pin);
+void printEvalQueue(Circuit *circuit);
+bool isComponentInBuff(Component **buff,  Component *component, int size);
+void setPinState(Pin *pin, PinState state);
 
 #endif

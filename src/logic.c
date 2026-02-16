@@ -5,34 +5,17 @@
 #include <stdio.h>
 
 
-LogicCtx *logicInit() {
-    LogicCtx *ctx = malloc(sizeof(LogicCtx));
-    if (!ctx) {
-        return NULL;
-    }
+void logicInit(LogicCtx *ctx) {
+    assert(ctx);
+
     Circuit **circuits = malloc( DEFAULT_CIRCUIT_CAP * sizeof(Circuit *));
     if (!circuits) {
-        free(ctx);
-        return NULL;
+        return;
     }
     ctx->circuits = circuits;
     ctx->nCircuits = 0;
     ctx->capCircuits = DEFAULT_CIRCUIT_CAP;
-
-
-    Component **evalQueue = malloc( EVAL_QUEUE_CAP * sizeof(Component * ));
-    if (!evalQueue) {
-        free(ctx);
-        free(circuits);
-        return NULL;
-    }
-    ctx->evalQueue = evalQueue;
-    ctx->queueSize = 0;
-    ctx->queueCap = EVAL_QUEUE_CAP;
-
-
-    return ctx;
-
+    
 }
 
 void logicFree(LogicCtx *ctx) {
@@ -44,7 +27,6 @@ void logicFree(LogicCtx *ctx) {
     }
 
     free(circuits);
-    free(ctx);
 }
 
 Circuit *addCircuit(LogicCtx *ctx, Circuit *circuit) {
@@ -74,7 +56,7 @@ void insertCircuit(LogicCtx *ctx, Circuit *circuit) {
     ctx->circuits[ctx->nCircuits++] = circuit;
 }
 
-Component *addComponent(Circuit *dest, Component *component) {
+Component *addComponent(LogicCtx *ctx, Circuit *dest, Component *component) {
     assert(dest);
     assert(component);
 
@@ -87,6 +69,14 @@ Component *addComponent(Circuit *dest, Component *component) {
             }
         dest->components = components;
         dest->capComponents *= 2;
+    }
+
+    for (int i = 0; i < component->nPins; i++) {
+            if (dest->nPins >= dest->capPins) {
+                dest->pins = realloc(dest->pins, dest->capPins * 2 * sizeof(Pin *));
+                dest->capPins *= 2;
+            }
+            dest->pins[dest->nPins++] = component->pins[i];
     }
 
     dest->components[dest->nComponents++] = component;
@@ -135,7 +125,16 @@ int connectPins(Circuit *circuit, Pin *pin1, Pin *pin2, Wire *wire) {
     assert(pin1);
     assert(pin2);
 
-    if (pin1->type == pin2->type) return 0;
+    int a = pin1->component ? 1: 0;
+    int b = pin2->component ? 1: 0;
+    switch (a+b){
+        case 1:
+            if (pin1->type != pin2->type) return 0;
+            break;
+        case 2:
+            if (pin1->type == pin2->type) return 0;
+            break;
+    }
 
     if (isConnected(pin1, pin2)) return 0;
 
@@ -143,6 +142,7 @@ int connectPins(Circuit *circuit, Pin *pin1, Pin *pin2, Wire *wire) {
     insertConnected(pin1, pin2);
     insertConnected(pin2, pin1);
     insertWire(circuit, wire);
+
     return 1;
 }
 
@@ -176,6 +176,7 @@ void insertConnected(Pin *pinMain, Pin *pinConnected) {
 void insertWire(Circuit *circuit, Wire *wire) {
     assert(circuit);
 
+    wire->circuit = circuit;
     if (circuit->nWires == circuit->capWires) {
         Wire *wires = realloc(circuit->wires, sizeof(Wire) * 2 * circuit->nWires);
         if (!wires) {
@@ -184,6 +185,10 @@ void insertWire(Circuit *circuit, Wire *wire) {
         circuit->wires = wires;
         circuit->capWires *= 2;
     }
+    if (!wire->startPin || !wire->endPin) {
+        return;
+    }
+    
     circuit->wires[circuit->nWires++] = *wire;
 }
 
@@ -240,31 +245,27 @@ Circuit *createCircuit(char *name, void (*eval)(Circuit *circuit)) {
 Component *createComponent(Circuit *defn) {
     assert(defn);
 
-    Component *component = malloc(sizeof(Component));
+    Component *component = malloc(sizeof(Component) + defn->nPins * sizeof(struct Pin *));
     if (!component) {
         return NULL;
     }
-    int nPins = defn->nPins;
-
-    Pin **pins = malloc(nPins * sizeof(Pin *));
-    if (!pins) {
-        free(component);
-        return NULL;
-    }
-
     component->defn = defn;
-    component->next = NULL;
 
-    component->pins = pins;
     component->nPins = defn->nPins;
     component->nInPins = defn->nInPins;
     component->nOutPins = defn->nOutPins;
-    for (int i = nPins-1; i >= 0; i--) {
-        Pin *srcPin = defn->pins[i];
+
+    for (int i = 0; i < component->defn->nPins; i++) {
+        Pin *srcPin = component->defn->pins[i];
         Pin *newPin = createPin(component, srcPin->type);
+        if (!srcPin->component) {
+            newPin->io = true;
+        } else {
+            newPin->io = false;
+        }
         component->pins[i] = newPin;
     }
-
+ 
     return component;
 }
 
@@ -281,61 +282,109 @@ Pin *createPin(Component *component, PinType type) {
     newPin->capConnected = DEFAULT_PIN_CONNECTED_CAP;
     newPin->state = LOW;
     newPin->type = type;
+    newPin->io = false;
 
     return newPin;
 
 }
 
-void handlePinChange(LogicCtx *ctx, Pin *pin) {
-    assert(ctx);
-    assert(pin);
-
-    for (int i = 0; i < pin->nConnected; i++) {
-        Pin *connectedPin = pin->connected[i];
-        calculatePinState(connectedPin);
-        if (connectedPin->component) {
-            if (ctx->queueSize < ctx->queueCap) {
-                ctx->evalQueue[ctx->queueSize++] = connectedPin->component;
-            }   
-        } 
-    }
-}
-
-int calculatePinState(Pin *pin) {
-    if (pin->type != IN) return -1;
-    for (int i = 0; i < pin->nConnected; i++) {
-        Pin *connectedPin = pin->connected[i];
-        if (connectedPin->state == 1) {
-            pin->state = 1;
-            return 1;
-        }
-    }
-    pin->state = 0;
-    return 0;
-}
-
-void evalComponent(Component *component) {
-    for (int i = 0; i < component->nPins; i++) {
-        Pin *pin = component->pins[i];
-        calculatePinState(pin);
-        component->defn->pins[i]->state = pin->state;
-    }
-    if (component->defn->eval) {
-        component->defn->eval(component->defn);
-        for (int i = 0; i < component->nPins; i++) {
-            if (component->pins[i]->type == OUT) {
-                component->pins[i] = component->defn->pins[i];
+PinState calculatePinState(Pin *pin) {
+if (!pin->component && pin->type == OUT || pin->component && pin->type == IN) {
+        for (int i = 0; i < pin->nConnected; i++) {
+            Pin *connectedPin = pin->connected[i];
+            if (connectedPin->state == HIGH) {
+                return HIGH;
             }
         }
     }
+    return LOW;
 }
 
-void logicEval(LogicCtx *ctx) {
-    for (int i = 0; i < ctx->queueSize; i++) {
-        evalComponent(ctx->evalQueue[i]);
+void logicEval(Circuit *circuit) {
+    int queueSize = 50;
+    Component *visited[queueSize];
+    int visitedSize = 0;
+    Component *evalQueue[queueSize];
+    int front = 0;
+    int back = 0;
+
+    for (int i = 0; i < circuit->nPins; i++) {
+        Pin *pin = circuit->pins[i];
+        if (pin->type == IN && !pin->component) {
+            for (int j = 0; j < pin->nConnected; j++) {
+                Component *component = pin->connected[j]->component;
+                if (component && !isComponentInBuff(visited, component, visitedSize)) {
+                    evalQueue[back] = component;
+                    back = (back+1) % queueSize;
+                    visited[visitedSize++] = component;
+                }
+            }
+        }
     }
-    ctx->queueSize = 0;
+
+    while (front != back) {
+        Component *component = evalQueue[front];
+        front = (front+1) % queueSize;
+        for (int i = 0; i < component->nPins; i++) {
+            // if (component->pins[i]->io && component->pins[i]->type == IN) {
+            //     setPinState(component->pins[i], calculatePinState(component->pins[i]));
+            // } 
+            setPinState(component->defn->pins[i], component->pins[i]->state);
+        }
+        if (component->defn->eval) {
+            component->defn->eval(component->defn);
+        } else {
+            logicEval(component->defn);
+        }
+        for (int i = 0; i < component->nPins; i++) {
+            Pin *pin = component->pins[i];
+            setPinState(pin, component->defn->pins[i]->state);
+            if (pin->io && pin->type == OUT) {
+                for (int j = 0; j < pin->nConnected; j++) {
+                    Component *connComponent = pin->connected[j]->component;
+                    if (connComponent && !isComponentInBuff(visited, connComponent, visitedSize)) {
+                        evalQueue[back] = connComponent;
+                        visited[visitedSize++] = component;
+                        back = (back+1) % queueSize;
+                    }
+                }
+            }
+        }
+    } 
+    for (int i = 0; i < circuit->nPins; i++) {
+        Pin *pin = circuit->pins[i];
+        if (!pin->component && pin->type == OUT || pin->io && pin->component && pin->type == IN) {
+            setPinState(pin, calculatePinState(pin));
+        }
+    }
+
 }
+
+    
+
+void setPinState(Pin *pin, PinState state) {     
+    pin->state = state;
+}
+
+
+bool isComponentInBuff(Component **buff,  Component *component, int size) {
+    for (int i = 0; i < size; i++) {
+        Component *c = buff[i];
+        if (component == c) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// void printEvalQueue(Circuit *circuit) {
+//     for (int i = 0; i <  circuit->evalBuffSize; i++) {
+//         Component *component = circuit->evalBuff[i];
+//         if (component) {
+//         } else {
+//         }
+//     }
+// }
 
 
 void deleteCircuit(Circuit *circuit) {
@@ -343,6 +392,8 @@ void deleteCircuit(Circuit *circuit) {
 
     Pin **pins = circuit->pins;
     for (int i = circuit->nPins-1; i >= 0; i--) {
+        Pin *pin = pins[i];
+        if (pin->component ) continue;
         deletePin(pins[i]);
     }
     free(pins);
@@ -365,7 +416,6 @@ void deleteComponent(Component *component) {
     for (int i = component->nPins-1; i >= 0; i--) {
         deletePin(pins[i]);
     }
-    free(pins);
 
     free(component);
 }
@@ -376,5 +426,6 @@ void deletePin(Pin *pin) {
     free(pin->connected);
     free(pin);
 }
+
 
 

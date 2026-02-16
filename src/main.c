@@ -12,13 +12,12 @@ void DrawControls(LogicCtx *ctx);
 void DrawEditor(LogicCtx *ctx);
 
 void DrawCircuit(Circuit *circuit, Vector2 pos);
-void DrawComponent(LogicCtx *ctx, Component *component);
+void DrawComponent(LogicCtx *ctx, Component *component, bool drawPins);
 void DrawPin(LogicCtx *ctx, Pin *pin, bool manualState);
 void DrawWire(Wire *wire);
 
 void HandleComponentDrag(LogicCtx *ctx);
 void HandleWireBuild();
-void HandleNameInput();
 
 const int ScreenWidth = 1270;
 const int ScreenHeight = 720;
@@ -31,12 +30,13 @@ const float ComponentPinRad = 10;
 const float ComponentPinBorder = 2;
 const float ComponentPinPad = 5;
 
-bool nameInput = false;
+bool circuitNameInput = false;
 
 bool hovering = false;
 bool mouseConsumed = false;
 
 Circuit *viewedCircuit = NULL;
+Circuit *evalCircuit = NULL;
 
 bool componentDragging = false;
 Component *draggedComponent = NULL;
@@ -50,39 +50,73 @@ Color PinBorderColor = BLACK;
 
 const float SideBarCircuitHeight = 50;
 
-void andLogic(Circuit *circuit) {
-    circuit->pins[2]->state = circuit->pins[0]->state && circuit->pins[1]->state;
+void nandLogic(Circuit *circuit) {
+    PinState oldState = circuit->pins[2]->state;
+    circuit->pins[2]->state = !(circuit->pins[0]->state && circuit->pins[1]->state);
 }
 
-void orLogic(Circuit *circuit) {
-    circuit->pins[2]->state = circuit->pins[0]->state || circuit->pins[1]->state;
-}
+// void norLogic(Circuit *circuit) {
+//     circuit->pins[2]->state = !(circuit->pins[0]->state || circuit->pins[1]->state);
+// }
+//
+// void notLogic(Circuit *circuit) {
+//     circuit->pins[1]->state = !circuit->pins[0]->state;
+// }
+//
+// void orLogic(Circuit *circuit) {
+//     circuit->pins[2]->state = circuit->pins[0]->state || circuit->pins[1]->state;
+// }
+//
+// void andLogic(Circuit *circuit) {
+//     PinState oldState = circuit->pins[2]->state;
+//     circuit->pins[2]->state = circuit->pins[0]->state && circuit->pins[1]->state;
+// }
+
 
 int main() {
 
-    LogicCtx *ctx = logicInit();
+    LogicCtx ctx;
+    logicInit(&ctx);
 
-    Circuit *and = createCircuit("AND", andLogic);
-    newPin(and, IN);
-    newPin(and, IN);
-    newPin(and, OUT);
-    addCircuit(ctx, and);
+    Circuit *nand = createCircuit("NAND", nandLogic);
+    newPin(nand, IN);
+    newPin(nand, IN);
+    newPin(nand, OUT);
+    addCircuit(&ctx, nand);
 
-    Circuit *or = createCircuit("OR", orLogic);
-    newPin(or, IN);
-    newPin(or, IN);
-    newPin(or, OUT);
-    addCircuit(ctx, or);
-
+    // Circuit *and = createCircuit("AND", andLogic);
+    // newPin(and, IN);
+    // newPin(and, IN);
+    // newPin(and, OUT);
+    // addCircuit(&ctx, and);
+    //
+    //
+    // Circuit *nor = createCircuit("NOR", norLogic);
+    // newPin(nor, IN);
+    // newPin(nor, IN);
+    // newPin(nor, OUT);
+    // addCircuit(&ctx, nor);
+    //
+    // Circuit *or = createCircuit("or", orLogic);
+    // newPin(or, IN);
+    // newPin(or, IN);
+    // newPin(or, OUT);
+    // addCircuit(&ctx, or);
+    //
+    // Circuit *not = createCircuit("not", notLogic);
+    // newPin(not, IN);
+    // newPin(not, OUT);
+    // addCircuit(&ctx, not);
 
     const int screenWidth = 1280;
     const int screenHeight = 720;
     InitWindow(screenWidth, screenHeight, "Logic Sim");
-    SetTargetFPS(60);
+    // SetTargetFPS(60);
     SetExitKey(KEY_NULL);
 
 
     viewedCircuit = createCircuit("NEW_CIRCUIT", NULL);
+    evalCircuit = viewedCircuit;
     drawnWire.color = RED;
 
     while (!WindowShouldClose()) {
@@ -90,7 +124,6 @@ int main() {
         ClearBackground(GRAY);
         mouseConsumed = false;
 
-        logicEval(ctx);
         if (hovering) {
             SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
             hovering = false;
@@ -102,22 +135,21 @@ int main() {
 
         
         HandleWireBuild();
-        HandleNameInput();
 
-        DrawEditor(ctx);
+        DrawEditor(&ctx);
 
-        DrawControls(ctx);
+        DrawControls(&ctx);
 
-        HandleComponentDrag(ctx);
+        HandleComponentDrag(&ctx);
 
 
-        char text[20];
         EndDrawing();
+        logicEval(evalCircuit);
     }
 
     CloseWindow();
 
-    logicFree(ctx);
+    logicFree(&ctx);
 }
 
 
@@ -126,7 +158,8 @@ void DrawControls(LogicCtx *ctx) {
     bool input = false;
     Rectangle panelBounds = {0, 0, SideBarWidth, GetScreenHeight()-2*SideBarButtonHeight};
 
-    Rectangle newButtBounds = {0,GetScreenHeight()-SideBarButtonHeight, SideBarWidth, SideBarButtonHeight}; 
+    Rectangle newButtBounds = {0,GetScreenHeight()-SideBarButtonHeight, SideBarWidth/2, SideBarButtonHeight}; 
+    Rectangle saveButtBounds = {SideBarWidth/2,GetScreenHeight()-SideBarButtonHeight, SideBarWidth/2, SideBarButtonHeight}; 
     Rectangle newInPinBounds = {0,GetScreenHeight()-2*SideBarButtonHeight, SideBarWidth/2, SideBarButtonHeight};
     Rectangle newOutPinBounds = {SideBarWidth/2,GetScreenHeight()-2*SideBarButtonHeight, SideBarWidth/2, SideBarButtonHeight};
 
@@ -147,6 +180,7 @@ void DrawControls(LogicCtx *ctx) {
 
     Vector2 cur = {(content.width)/2, 30};
     BeginScissorMode(view.x, view.y, view.width, view.height);
+    cur.y += scroll.y;
     for (int i = ctx->nCircuits-1; i >= 0; i--) {
         Circuit *circuit = ctx->circuits[i];
         DrawCircuit(circuit, cur);
@@ -156,15 +190,36 @@ void DrawControls(LogicCtx *ctx) {
     EndScissorMode();
 
 
+    if (circuitNameInput) {
+        Rectangle rect = {(GetScreenWidth()-SideBarWidth)/2, (GetScreenHeight()-SideBarButtonHeight)/2, SideBarWidth, SideBarButtonHeight};
+        GuiTextBox(rect, viewedCircuit->name, CIRCUT_NAME_LEN, true);
+        if (IsKeyPressed(KEY_ENTER)) {
+            circuitNameInput = false;
+            addCircuit(ctx, viewedCircuit);
+            viewedCircuit = createCircuit("NEW_CIRCUIT", NULL);
+            evalCircuit = viewedCircuit;
+        }
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            circuitNameInput = false;
+        }
+    }
+
     if (GuiButton(newButtBounds, "New Circuit")) {
+        if (viewedCircuit && evalCircuit == viewedCircuit) {
+            deleteCircuit(viewedCircuit);
+        }
+        viewedCircuit = createCircuit("NEW_CIRCUIT", NULL);
+    }
+    if (GuiButton(saveButtBounds, "Save Circuit")) {
+        circuitNameInput = true;
     }
 
     if (GuiButton(newInPinBounds, "New In Pin")) {
-        newPin(viewedCircuit, OUT);
+        newPin(viewedCircuit, IN);
         inputStr[0] = 0;
     }
     if (GuiButton(newOutPinBounds, "New Out Pin")) {
-        newPin(viewedCircuit, IN);
+        newPin(viewedCircuit, OUT);
         inputStr[0] = 0;
     }
 
@@ -190,9 +245,9 @@ void DrawEditor(LogicCtx *ctx) {
     Vector2 inCur = {editorBounds.x+50, editorBounds.y + editorBounds.height / 3}; 
     Vector2 outCur = {editorBounds.x+editorBounds.width-50, editorBounds.y + editorBounds.height / 3}; 
 
-    float outOff = (editorBounds.height / 3 - 2*circ->nInPins *ComponentPinRad)/(circ->nInPins+1);
+    float inOff = (editorBounds.height / 3 - 2*circ->nInPins *ComponentPinRad)/(circ->nInPins+1);
+    float outOff = (editorBounds.height / 3 - 2*circ->nOutPins *ComponentPinRad)/(circ->nOutPins+1);
         
-    float inOff = (editorBounds.height / 3 - 2*circ->nOutPins *ComponentPinRad)/(circ->nOutPins+1);
 
     inCur.y += ComponentPinRad + inOff;
     outCur.y += ComponentPinRad + outOff;
@@ -206,19 +261,21 @@ void DrawEditor(LogicCtx *ctx) {
 
     for (int i = 0; i < circ->nComponents; i++) {
         Component *component = circ->components[i];
-        DrawComponent(ctx, component);
+        DrawComponent(ctx, component, true);
     }
 
     for (int i = 0; i < circ->nPins; i++) {
         Pin *pin = circ->pins[i];
-        if (pin->type == IN) {
-            pin->pos = outCur;
-            outCur.y += 2*ComponentPinRad + outOff;
-        } else {
-            pin->pos = inCur;
-            inCur.y += 2*ComponentPinRad + inOff;
+        if (!pin->component) {
+            if (pin->type == OUT) {
+                pin->pos = outCur;
+                outCur.y += 2*ComponentPinRad + outOff;
+            } else if (pin->type == IN) {
+                pin->pos = inCur;
+                inCur.y += 2*ComponentPinRad + inOff;
+            }
+            DrawPin(ctx, pin, true);
         }
-        DrawPin(ctx, pin, true);
     }
 }
 
@@ -240,15 +297,18 @@ void DrawCircuit(Circuit *circuit, Vector2 pos) {
     if (CheckCollisionPointRec(GetMousePosition(), rect)) {
         hovering = true;        
         if (!componentDragging && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            componentDragging = true;
             draggedComponent = createComponent(circuit);
             draggedComponent->pos = GetMousePosition();
+            componentDragging = true;
+        }
+        if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
+            viewedCircuit =circuit;
         }
     }
 
 }
 
-void DrawComponent(LogicCtx *ctx, Component *component) {
+void DrawComponent(LogicCtx *ctx, Component *component, bool drawPins) {
     const int FontSize = 11;
     const float TextW = MeasureText(component->defn->name, FontSize);
     const float NamePad = 8;
@@ -273,18 +333,21 @@ void DrawComponent(LogicCtx *ctx, Component *component) {
     GuiDrawRectangle(rect, 1, BorderColor, BodyColor);
     GuiDrawText(component->defn->name, rect, TEXT_ALIGN_MIDDLE, TextColor);
 
-    for (int i = component->nPins-1; i >= 0; i--) {
-        Pin *pin = component->pins[i];
-        if (pin->type == IN) {
-            pin->pos = inPinCur;
-            inPinCur.y -= inPinPad + 2*ComponentPinRad;
-        } else {
-            pin->pos = outPinCur;
-            outPinCur.y -= outPinPad + 2*ComponentPinRad;
+    if (drawPins) {
+        for (int i = component->nPins-1; i >= 0; i--) {
+            Pin *pin = component->pins[i];
+            if (pin->io) {
+                if (pin->type == IN) {
+                    pin->pos = inPinCur;
+                    inPinCur.y -= inPinPad + 2*ComponentPinRad;
+                } else if (pin->type == OUT) {
+                    pin->pos = outPinCur;
+                    outPinCur.y -= outPinPad + 2*ComponentPinRad;
+                }
+                DrawPin(ctx, pin, false);
+            }
         }
-        DrawPin(ctx, pin, false);
     }
-
 }
 
 void DrawWire(Wire *wire) {
@@ -313,7 +376,7 @@ void HandleComponentDrag(LogicCtx *ctx) {
     if (componentDragging) {
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
             if (CheckCollisionPointRec(GetMousePosition(), (Rectangle) {SideBarWidth, 0, GetScreenWidth()-SideBarWidth, GetScreenHeight()})) {
-                addComponent(viewedCircuit, draggedComponent);
+                Component *component = addComponent(ctx, viewedCircuit, draggedComponent);
                 draggedComponent = NULL;
                 componentDragging = false;
             } else {
@@ -323,7 +386,7 @@ void HandleComponentDrag(LogicCtx *ctx) {
             } 
         } else {
             draggedComponent->pos = GetMousePosition();
-            DrawComponent(ctx, draggedComponent);
+            DrawComponent(ctx, draggedComponent, false);
         }
     }
 }
@@ -342,21 +405,16 @@ void HandleWireBuild() {
     }
 }
 
-void HandleNameInput() {
-    if (nameInput) {
-    }
-}
 
 void DrawPin(LogicCtx *ctx, Pin *pin, bool manualState) {
     Vector2 pos = pin->pos;
     Color color = pin->state ? WireColorOn : WireColorOff;
     DrawCircleV(pos, ComponentPinRad, PinBorderColor);
     DrawCircleV(pos, ComponentPinRad-ComponentPinBorder, color);
-    if (manualState && pin->type == OUT && CheckCollisionPointCircle(GetMousePosition(), pos, ComponentPinRad) && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-        pin->state = !pin->state;
-        handlePinChange(ctx, pin);
+    if (manualState  && CheckCollisionPointCircle(GetMousePosition(), pos, ComponentPinRad) && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+        setPinState(pin, !pin->state);
     }
-    if (pin->type == IN) {
+    if ((!pin->component && pin->type == OUT) || (pin->component && pin->type == IN)) {
         if (buildingWire) {
             hovering = true;
             if (CheckCollisionPointCircle(GetMousePosition(), pos, ComponentPinRad) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -366,14 +424,9 @@ void DrawPin(LogicCtx *ctx, Pin *pin, bool manualState) {
                 drawnWire.pathLen--;
                 connectPins(viewedCircuit, drawnWire.startPin, pin, &drawnWire);
                 buildingWire = false;
-                int oldState = pin->state;
-                calculatePinState(pin);
-                if (oldState != pin->state) {
-                    handlePinChange(ctx, pin);
-                }
             }
         }
-    } else {
+    } else if ((!pin->component && pin->type == IN) || (pin->component && pin->type == OUT)){
         if (!buildingWire) {
             hovering = true;
             if (CheckCollisionPointCircle(GetMousePosition(), pos, ComponentPinRad) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
