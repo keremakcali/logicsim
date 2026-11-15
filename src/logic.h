@@ -2,6 +2,8 @@
 #define LOGIC_H
 
 #include "raylib.h"
+#include <stdbool.h>
+#include <raylib.h>
 
 #define EVAL_BUFF_CAP 30
 

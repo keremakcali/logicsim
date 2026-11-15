@@ -1,0 +1,6 @@
+-Wall
+-Wextra
+-std=c99
+-Isrc
+-Iext
+-Iext/raylib/src

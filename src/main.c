@@ -1,11 +1,11 @@
-#include "logic.h"
-#include "raylib.h"
+#include <math.h>
+#include <stddef.h>
 
 #include <raylib.h>
-
-
 #define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
+#include <raygui.h>
+
+#include "logic.h"
 
 
 void DrawControls(LogicCtx *ctx);
