@@ -1,13 +1,12 @@
 #ifndef LOGIC_H
 #define LOGIC_H
 
-#include "raylib.h"
 #include <stdbool.h>
 #include <raylib.h>
 
 #define EVAL_BUFF_CAP 30
 
-#define CIRCUT_NAME_LEN 20
+#define CIRCUIT_NAME_LEN 20
 
 #define DEFAULT_CIRCUIT_CAP 20
 
@@ -56,7 +55,7 @@ typedef struct Pin {
 } Pin;
 
 typedef struct Circuit {
-    char name[CIRCUT_NAME_LEN+1];
+    char name[CIRCUIT_NAME_LEN+1];
 
     struct Pin **pins;
     int nPins;

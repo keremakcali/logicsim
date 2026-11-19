@@ -200,7 +200,8 @@ Circuit *createCircuit(char *name, void (*eval)(Circuit *circuit)) {
         return NULL;
     }
 
-    strncpy(newCirc->name, name, CIRCUT_NAME_LEN);
+    newCirc->name[CIRCUIT_NAME_LEN] = '\0';
+    strncpy(newCirc->name, name, CIRCUIT_NAME_LEN);
     Pin **pins = malloc(DEFAULT_PIN_CAP * sizeof(Pin *));
     if (!pins) {
         free(newCirc);
@@ -301,63 +302,34 @@ if (!pin->component && pin->type == OUT || pin->component && pin->type == IN) {
 }
 
 void logicEval(Circuit *circuit) {
-    int queueSize = 50;
-    Component *visited[queueSize];
-    int visitedSize = 0;
-    Component *evalQueue[queueSize];
-    int front = 0;
-    int back = 0;
-
     for (int i = 0; i < circuit->nPins; i++) {
         Pin *pin = circuit->pins[i];
-        if (pin->type == IN && !pin->component) {
-            for (int j = 0; j < pin->nConnected; j++) {
-                Component *component = pin->connected[j]->component;
-                if (component && !isComponentInBuff(visited, component, visitedSize)) {
-                    evalQueue[back] = component;
-                    back = (back+1) % queueSize;
-                    visited[visitedSize++] = component;
-                }
-            }
+        if (pin->io && pin->component && pin->type == IN) {
+            setPinState(pin, calculatePinState(pin));
         }
     }
 
-    while (front != back) {
-        Component *component = evalQueue[front];
-        front = (front+1) % queueSize;
-        for (int i = 0; i < component->nPins; i++) {
-            // if (component->pins[i]->io && component->pins[i]->type == IN) {
-            //     setPinState(component->pins[i], calculatePinState(component->pins[i]));
-            // } 
-            setPinState(component->defn->pins[i], component->pins[i]->state);
+    for (int i = 0; i < circuit->nComponents; i++) {
+        Component *component = circuit->components[i];
+        for (int j = 0; j < component->nPins; j++) {
+            setPinState(component->defn->pins[j], component->pins[j]->state);
         }
         if (component->defn->eval) {
             component->defn->eval(component->defn);
         } else {
             logicEval(component->defn);
         }
-        for (int i = 0; i < component->nPins; i++) {
-            Pin *pin = component->pins[i];
-            setPinState(pin, component->defn->pins[i]->state);
-            if (pin->io && pin->type == OUT) {
-                for (int j = 0; j < pin->nConnected; j++) {
-                    Component *connComponent = pin->connected[j]->component;
-                    if (connComponent && !isComponentInBuff(visited, connComponent, visitedSize)) {
-                        evalQueue[back] = connComponent;
-                        visited[visitedSize++] = component;
-                        back = (back+1) % queueSize;
-                    }
-                }
-            }
-        }
-    } 
-    for (int i = 0; i < circuit->nPins; i++) {
-        Pin *pin = circuit->pins[i];
-        if (!pin->component && pin->type == OUT || pin->io && pin->component && pin->type == IN) {
-            setPinState(pin, calculatePinState(pin));
+        for (int j = 0; j < component->nPins; j++) {
+            setPinState(component->pins[j], component->defn->pins[j]->state);
         }
     }
 
+    for (int i = 0; i < circuit->nPins; i++) {
+        Pin *pin = circuit->pins[i];
+        if ((!pin->component && pin->type == OUT) || (pin->io && pin->component && pin->type == IN)) {
+            setPinState(pin, calculatePinState(pin));
+        }
+    }
 }
 
     
